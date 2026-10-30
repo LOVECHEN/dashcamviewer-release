@@ -1,0 +1,58 @@
+name: mirror
+
+on:
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '同步范围'
+        type: choice
+        options:
+          - all
+          - current
+          - backfill
+          - support
+          - notes
+          - probe
+        default: all
+      max_versions:
+        description: '本次最多新建多少个历史版本 Release'
+        default: '4'
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Sync official files
+        env:
+          DCV_DOWNLOAD_BASE_URL: ${{ secrets.DCV_DOWNLOAD_BASE_URL }}
+          DCV_SITE_URL: ${{ secrets.DCV_SITE_URL }}
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ github.event.inputs.mode || 'all' }}
+          MAX_VERSIONS: ${{ github.event.inputs.max_versions || '4' }}
+        run: python3 scripts/mirror.py "$MODE" --max-versions "$MAX_VERSIONS"
+
+      - name: Clean old workflow runs
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -t run_ids < <(
+            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/mirror.yml/runs?per_page=100" \
+              --jq '.workflow_runs[5:][] | .id'
+          )
+          for run_id in "${run_ids[@]}"; do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          done
